@@ -38,6 +38,8 @@ const B = window.L2Backend;
 let store = { stock: {}, learned: {}, meta: {} };
 let session = null, loaded = false, loadErr = null, loading = null, unsub = null, onData = null;
 const short = e => String(e || '').split('@')[0];
+/* Friendly name: config.js can list exact names (L2_CONFIG.names); otherwise the first word of the e-mail name, capitalised. */
+const nice = e => { const h = short(e).toLowerCase(), m = (window.L2_CONFIG || {}).names || {}; if (m[h]) return m[h]; const w = h.split(/[^a-z]+/)[0]; return w ? w[0].toUpperCase() + w.slice(1) : h; };
 const when = iso => (iso ? new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '');
 const sgn = n => (n > 0 ? '+' : n < 0 ? '−' : '') + num(Math.abs(n));
 const kindCls = k => ({ 'Raw material': 't-raw', 'Equipment part': 't-part', 'Crystal / Gemstone': 't-crystal', 'Recipe scroll': 't-recipe' }[k] || '');
@@ -460,8 +462,8 @@ function renderOnline() {
   if (B.mode !== 'shared' || !session || !B.presence) { el.hidden = true; return; }
   const me = short(session.email), others = onlineNow.filter(n => n !== me);
   el.hidden = false; el.classList.toggle('alone', !others.length);
-  el.title = others.length ? 'Online now: ' + [me].concat(others).join(', ') : 'Only you are online right now';
-  el.innerHTML = others.length ? `<i></i><span>${esc(others.join(', '))} online</span>` : '<i></i><span>Only you online</span>';
+  el.title = others.length ? 'Online now: ' + [me].concat(others).map(nice).join(', ') : 'Only you are online right now';
+  el.innerHTML = others.length ? `<i></i><span>${esc(others.map(nice).join(', '))} online</span>` : '<i></i><span>Only you online</span>';
 }
 function stopPresence() { if (unpres) { unpres(); unpres = null; } onlineNow = []; renderOnline(); }
 function startPresence() { stopPresence(); if (B.mode === 'shared' && session && B.presence) unpres = B.presence(list => { onlineNow = list; renderOnline(); }); }
@@ -471,7 +473,7 @@ function renderWho() {
   renderOnline();
   const w = $('#who');
   if (B.mode === 'local') w.innerHTML = '<span class="tag">test mode</span>';
-  else if (session) w.innerHTML = `<span class="whoname" title="${esc(session.email)}">${esc(short(session.email))}</span><button class="iconbtn" id="signout">Sign out</button>`;
+  else if (session) w.innerHTML = `<span class="whoname" title="${esc(session.email)}">${esc(nice(session.email))}</span><button class="iconbtn" id="signout">Sign out</button>`;
   else w.innerHTML = '<a class="iconbtn" href="#/home">Sign in</a>';
 }
 function setSession(user) {
@@ -483,7 +485,7 @@ function setSession(user) {
   renderWho();
   if (viewById[current] && (viewById[current].group === 'Clan tools' || current === 'home')) rerender();
 }
-const conflictLines = list => list.map(c => `<div class="rowline"><span>${esc(c.item)}</span><span class="k">now <b>${num(c.current)}</b>${c.by ? ` · changed by ${esc(short(c.by))} ${esc(when(c.at))}` : ''} <span class="hint">(you saw ${num(c.expected)}${c.new != null ? `, you wanted ${num(c.new)}` : ''})</span></span></div>`).join('');
+const conflictLines = list => list.map(c => `<div class="rowline"><span>${esc(c.item)}</span><span class="k">now <b>${num(c.current)}</b>${c.by ? ` · changed by ${esc(nice(c.by))} ${esc(when(c.at))}` : ''} <span class="hint">(you saw ${num(c.expected)}${c.new != null ? `, you wanted ${num(c.new)}` : ''})</span></span></div>`).join('');
 
 /* ---------------------------------------------------------------- Warehouse */
 function warehouseView(el) {
@@ -499,7 +501,7 @@ function warehouseView(el) {
     </div>
     <p class="hint" id="stkhint"${s.stk ? '' : ' hidden'}>Stock-take: type the counts from the game, press Enter to jump to the next row, then press <b>Save all</b>. Filters and search keep what you typed.</p>
     <div id="t"></div><div class="draftbar" id="draftbar" hidden></div>`;
-  const lcHtml = n => { const m = store.meta[n]; return m && m.at ? `${esc(short(m.by))} · ${esc(when(m.at))}` : ''; };
+  const lcHtml = n => { const m = store.meta[n]; return m && m.at ? `${esc(nice(m.by))} · ${esc(when(m.at))}` : ''; };
   const val = inp => Math.min(2000000000, Math.max(0, Math.floor(Number(inp.value)) || 0));
   const cell = r => {
     const d = draft[r.name], cur = store.stock[r.name] || 0, v = d ? d.val : cur, base = d ? d.base : cur, dl = v - cur;
@@ -628,7 +630,7 @@ function historyView(el) {
   el.innerHTML = head('History', 'Every change to the shared warehouse — who, what and when. Newest first (last 1,000 entries). A Commit shows one line per material it used.') + testBanner() + '<div id="t"><p class="lead">Loading…</p></div>';
   const draw = list => {
     const host = $('#t', el); if (!host || current !== 'history') return;
-    const rows = list.map(h => ({ id: h.id, at: h.at, by: short(h.by), action: ACTION[h.action] || h.action, item: h.item, o: h.old_qty, n: h.new_qty, label: h.label || '' }));
+    const rows = list.map(h => ({ id: h.id, at: h.at, by: nice(h.by), action: ACTION[h.action] || h.action, item: h.item, o: h.old_qty, n: h.new_qty, label: h.label || '' }));
     makeTable(host, {
       rows, noun: 'entries', pageSize: 150, placeholder: 'Search item, person or note…',
       search: r => [r.item, r.by, r.action, r.label].join(' '),
@@ -768,7 +770,7 @@ function homeView(el) {
   if (B.mode === 'shared' && !session) { loginView(el); el.insertAdjacentHTML('beforeend', quick); return; }   // sign in right here, so you stay on Home afterwards
   gated(inner)(el);
   function inner(host) {
-    const who = session ? short(session.email) : '';
+    const who = session ? nice(session.email) : '';
     host.innerHTML = head(who ? 'Welcome, ' + who : 'Welcome', 'Where the clan stands today: what is in the warehouse, what you can craft right now and what changed last.') + '<div id="hm"></div>' + quick;
     const box = $('#hm', host); let hist = [];
     const draw = () => {
@@ -779,12 +781,12 @@ function homeView(el) {
       const ready = res.filter(x => x.R.ok), near = res.filter(x => !x.R.ok).map(x => ({ it: x.it, n: x.R.rows.filter(r => !r.ok).length })).sort((a, b) => a.n - b.n || a.it.name.localeCompare(b.it.name)).slice(0, 5);
       const last = hist[0];
       const req = (it, extra) => `<div class="rowline"><button class="lnk" data-req="${esc(it.name)}">${esc(it.name)}</button> ${chip(it.grade, 'g-' + it.grade)}<span class="k">${extra}</span></div>`;
-      const acts = hist.slice(0, 8).map(h => `<div class="rowline"><span class="when">${esc(when(h.at))}</span> <b>${esc(short(h.by))}</b> ${esc(ACTION[h.action] || h.action)} ${link(h.item)}<span class="k">${typeof h.old_qty === 'number' ? `${num(h.old_qty)} → <b>${num(h.new_qty)}</b>` : ''}</span></div>`).join('');
+      const acts = hist.slice(0, 8).map(h => `<div class="rowline"><span class="when">${esc(when(h.at))}</span> <b>${esc(nice(h.by))}</b> ${esc(ACTION[h.action] || h.action)} ${link(h.item)}<span class="k">${typeof h.old_qty === 'number' ? `${num(h.old_qty)} → <b>${num(h.new_qty)}</b>` : ''}</span></div>`).join('');
       box.innerHTML = `<div class="tiles">
         <div class="card tile"><b>${num(stockItems.length)}</b><span>materials in the warehouse</span><small>${num(units)} units in total</small></div>
         <div class="card tile"><b>${num(lEq.length)}</b><span>equipment recipes learned</span><small>${num(lMat.length)} material recipes ticked</small></div>
         <div class="card tile"><b>${num(ready.length)}</b><span>ready to craft now</span><small>from the recipes you have learned</small></div>
-        <div class="card tile"><b class="sm">${last ? esc(short(last.by)) : '—'}</b><span>last change</span><small>${last ? esc(when(last.at)) + ' · ' + esc(ACTION[last.action] || last.action) : 'nothing yet'}</small></div></div>
+        <div class="card tile"><b class="sm">${last ? esc(nice(last.by)) : '—'}</b><span>last change</span><small>${last ? esc(when(last.at)) + ' · ' + esc(ACTION[last.action] || last.action) : 'nothing yet'}</small></div></div>
         <div class="cols2">
           <div class="card"><h3 style="margin-top:0">Ready to craft now</h3>${ready.length ? ready.slice(0, 12).map(x => req(x.it, 'ready')).join('') + (ready.length > 12 ? `<p class="hint">…and ${ready.length - 12} more.</p>` : '') : '<p class="lead" style="margin:0">Nothing yet. Fill the warehouse and tick “Recipe already learned” in Requirements Check; learned recipes show up here when you hold everything for them.</p>'}
             ${near.length ? `<h4 style="margin:16px 0 6px;font:700 12px var(--sans);text-transform:uppercase;letter-spacing:.1em;color:var(--muted)">Closest to ready</h4>${near.map(x => req(x.it, x.n + ' short')).join('')}` : ''}</div>
