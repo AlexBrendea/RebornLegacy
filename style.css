@@ -274,3 +274,11 @@ a.tl:hover { border-color: var(--accent); }
 a.tl h3 { margin: 0 0 6px; }
 a.tl p { color: var(--muted); margin: 0; }
 .quick { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+
+/* Raw Material Breakdown: every column fits the screen (vertical headers); phones still scroll sideways */
+.matrix { table-layout: fixed; width: 100%; min-width: 880px; }
+.matrix td, .matrix th { padding: 6px 2px; }
+.matrix th.col { min-width: 0; height: 150px; vertical-align: bottom; text-align: center; white-space: nowrap; }
+.matrix th.col .lnk { writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; padding: 4px 0; font-size: 13px; }
+.matrix td.v { font-size: 13px; text-align: center; }
+.matrix tbody td:first-child, .matrix thead th:first-child { width: 190px; min-width: 190px; padding: 6px 10px; }

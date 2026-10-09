@@ -802,8 +802,8 @@ const VIEWS = [
   { id: 'matsrc', label: 'Material Recipe Sourcing', group: 'Reference', render: matSourcingView },
   { id: 'equip', label: 'Equipment Recipes', group: 'Reference', render: equipmentView },
   { id: 'equipsrc', label: 'Equipment Sourcing', group: 'Reference', render: equipSourcingView },
-  { id: 'notes', label: 'Notes', group: 'Reference', render: notesView },
-  { id: 'audit', label: 'Audit Log', group: 'Reference', render: auditView },
+  { id: 'notes', label: 'Notes', group: 'Reference', render: notesView, hidden: true },
+  { id: 'audit', label: 'Audit Log', group: 'Reference', render: auditView, hidden: true },
 ];
 const viewById = Object.fromEntries(VIEWS.map(v => [v.id, v]));
 
@@ -899,7 +899,7 @@ const ICON = {
 };
 function renderNav() {
   let h = '', g = '';
-  VIEWS.forEach(v => {
+  VIEWS.filter(v => !v.hidden).forEach(v => {
     if (v.group !== g) { g = v.group; if (g) h += `<div class="navgroup">${esc(g)}</div>`; }
     h += `<a href="#/${v.id}" class="${v.id === current ? 'on' : ''}${v.soon ? ' later' : ''}"><span class="nl"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${ICON[v.id] || ICON.start}"/></svg>${esc(v.label)}</span>${v.soon ? '<span class="soon">soon</span>' : ''}</a>`;
   });
