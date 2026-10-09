@@ -249,7 +249,16 @@ function rawView(el) {
     $('tbody', el).innerHTML = rows.map(([n, v]) => `<tr><td style="--rc:${matByName[n] ? tierColor(matByName[n].tier) : 'transparent'}">${link(n)}</td>` +
       cols.map(i => `<td class="v ${v[i] ? 'nz' : 'z'}">${v[i] ? num(v[i]) : '·'}</td>`).join('') + '</tr>').join('');
     $('.count', el).textContent = `${rows.length} of ${R.rows.length} materials`;
+    fit();
   }
+  // Wide screens: horizontal (wrapped) names. Narrow screens: vertical names so every column still fits.
+  function fit() {
+    const wrap = $('.tablewrap', el), tb = $('table.matrix', el); if (!wrap || !tb) return;
+    const n = Math.max(1, tb.querySelectorAll('th.col').length);
+    tb.classList.toggle('hz', (wrap.clientWidth - 190) / n >= 62);
+  }
+  if (window.__rawFit) window.removeEventListener('resize', window.__rawFit);
+  window.__rawFit = fit; window.addEventListener('resize', fit);
   draw();
   $('input[type=search]', el).addEventListener('input', e => { s.q = e.target.value; draw(); });
   $('#hz', el).addEventListener('change', e => { s.hide = e.target.checked; draw(); });
@@ -870,6 +879,7 @@ function route() {
   const { view, name } = parseHash();
   if (view !== current) {
     current = view; onData = null;
+    $('#view').classList.toggle('wide', view === 'raw');
     const el = $('#view'); el.innerHTML = '';
     viewById[view].render(el);
     document.title = viewById[view].label + ' · L2 Reborn Recipe Tracker';

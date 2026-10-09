@@ -282,3 +282,9 @@ a.tl p { color: var(--muted); margin: 0; }
 .matrix th.col .lnk { writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; padding: 4px 0; font-size: 13px; }
 .matrix td.v { font-size: 13px; text-align: center; }
 .matrix tbody td:first-child, .matrix thead th:first-child { width: 190px; min-width: 190px; padding: 6px 10px; }
+
+.content.wide { max-width: none; }
+.matrix.hz th.col { height: auto; padding: 8px 2px 6px; vertical-align: bottom; }
+.matrix.hz th.col, .matrix.hz th.col .lnk { text-transform: none; letter-spacing: 0; }
+.matrix.hz th.col .lnk { writing-mode: horizontal-tb; transform: none; white-space: normal; text-align: center; font-size: 11px; font-weight: 600; line-height: 1.15; letter-spacing: -.01em; overflow-wrap: break-word; padding: 0; }
+.matrix.hz td.v { font-size: 14px; }
