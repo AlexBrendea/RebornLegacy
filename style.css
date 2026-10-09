@@ -212,3 +212,5 @@ table.req th, table.req td { padding: 6px 8px; }
 .stocktake .setto .btn { display: none; }
 .stocktake .setto input { width: 120px; }
 .neg { color: var(--bad); } .pos { color: var(--ok); }
+.mlk { justify-content: center; }
+.mlk input { width: 18px; height: 18px; cursor: pointer; }

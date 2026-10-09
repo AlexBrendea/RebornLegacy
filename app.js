@@ -200,7 +200,14 @@ function startView(el) {
 }
 
 function materialsView(el) {
-  el.innerHTML = head('Material Recipes', 'What each Tier 1–4 material is made from. Tier 1 uses raw materials only; higher tiers build on lower ones.') + '<div id="t"></div>';
+  /* "Recipe learned" tick: a shared reminder (stored in the same learned list as the equipment recipes).
+     It does not affect the Requirements Check or the warehouse. Needs a sign-in, like the clan tools. */
+  const can = B.mode === 'local' || !!session;
+  el.innerHTML = head('Material Recipes', 'What each Tier 1–4 material is made from. Tier 1 uses raw materials only; higher tiers build on lower ones.') +
+    (can ? '' : '<p class="hint">Sign in (Warehouse tab) to tick which material recipes you have already learned.</p>') + '<div id="t"></div>';
+  const cv = current;
+  if (can && !loaded && !loadErr) ensureLoaded().then(() => { if (current === cv && $('#view') === el) rerender(); });
+  onData = () => el.querySelectorAll('[data-ml]').forEach(c => { c.checked = !!store.learned[c.dataset.ml]; });
   makeTable($('#t', el), {
     rows: D.materials, noun: 'materials', placeholder: 'Search material or ingredient…',
     search: m => m.name + ' ' + m.ing.map(i => i[0]).join(' '),
@@ -208,15 +215,23 @@ function materialsView(el) {
     filters: [
       { id: 'tier', label: 'Tier', options: ['1', '2', '3', '4'], test: (m, v) => String(m.tier) === v },
       { id: 'intro', label: 'Introduced', options: uniq(D.materials.map(m => m.intro)).sort(byOrder(CHRON)), test: (m, v) => m.intro === v },
-    ],
+    ].concat(can ? [{ id: 'rl', label: 'Recipe', options: ['Learned', 'Not learned yet'], test: (m, v) => !!store.learned[m.name] === (v === 'Learned') }] : []),
     cols: [
       { key: 'name', label: 'Material', get: m => m.name, html: m => link(m.name) },
+      ...(can ? [{ key: 'rl', label: 'Recipe learned', get: m => (store.learned[m.name] ? 0 : 1),
+        html: m => `<label class="tog mlk"><input type="checkbox" data-ml="${esc(m.name)}"${store.learned[m.name] ? ' checked' : ''}${loaded ? '' : ' disabled'} aria-label="Recipe for ${esc(m.name)} learned"></label>` }] : []),
       { key: 'tier', label: 'Tier', get: m => m.tier, html: m => chip('Tier ' + m.tier, 't-' + m.tier) },
       { key: 'intro', label: 'Introduced', get: m => CHRON.indexOf(m.intro), html: m => `<span class="chr">${esc(m.intro)}</span>` },
       { key: 'out', label: 'Output qty', cls: 'num', get: m => m.out, html: m => num(m.out) },
       { key: 'ing', label: 'Ingredients', nosort: true, get: m => '', html: m => ingList(m.ing) },
     ],
   }, st('materials'));
+  $('#t', el).addEventListener('change', async e => {
+    const c = e.target.closest('[data-ml]'); if (!c) return;
+    const item = c.dataset.ml, chk = c.checked, prev = !!store.learned[item];
+    if (chk) store.learned[item] = true; else delete store.learned[item];
+    try { await B.setLearned(item, chk); } catch (err) { if (prev) store.learned[item] = true; else delete store.learned[item]; c.checked = prev; toast('Could not save — ' + errText(err)); }
+  });
 }
 
 function rawView(el) {
