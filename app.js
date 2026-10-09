@@ -472,7 +472,7 @@ function setSession(user) {
   if (user || B.mode === 'local') unsub = B.subscribe(scheduleRefresh);
   if (user) maybePresence(); else stopPresence();
   renderWho();
-  if (viewById[current] && viewById[current].group === 'Clan tools') rerender();
+  if (viewById[current] && (viewById[current].group === 'Clan tools' || current === 'home')) rerender();
 }
 const conflictLines = list => list.map(c => `<div class="rowline"><span>${esc(c.item)}</span><span class="k">now <b>${num(c.current)}</b>${c.by ? ` · changed by ${esc(short(c.by))} ${esc(when(c.at))}` : ''} <span class="hint">(you saw ${num(c.expected)}${c.new != null ? `, you wanted ${num(c.new)}` : ''})</span></span></div>`).join('');
 
@@ -749,7 +749,55 @@ function reqView(el) {
   });
 }
 
+/* ---------------------------------------------------------------------- Home */
+function homeView(el) {
+  const quick = `<div class="cols2 quick">
+    <a class="card tl" href="#/warehouse"><h3>Warehouse</h3><p>What the clan holds right now. Type what the game shows; both of you see it.</p></a>
+    <a class="card tl" href="#/reqcheck"><h3>Requirements Check</h3><p>Pick an item and see what is missing, what to craft first, then Commit.</p></a>
+    <a class="card tl" href="#/equip"><h3>Equipment Recipes</h3><p>Every recipe and what it is made from.</p></a>
+    <a class="card tl" href="#/start"><h3>Start Here</h3><p>How the workbook and the colours work.</p></a></div>`;
+  if (B.mode === 'shared' && !session) {
+    el.innerHTML = head('Reborn: Legacy', 'Your shared recipe book and clan warehouse for Lineage II Reborn: Legacy.') +
+      `<div class="card"><h2>Welcome</h2><p>Sign in to see the clan warehouse, what you can craft right now and the latest changes. The reference pages on the left work without signing in.</p>
+      <div class="commitbar"><a class="btn primary" href="#/warehouse">Sign in</a><a class="btn" href="#/start">Start here</a></div></div>` + quick;
+    return;
+  }
+  gated(inner)(el);
+  function inner(host) {
+    const who = session ? short(session.email) : '';
+    host.innerHTML = head(who ? 'Welcome, ' + who : 'Welcome', 'Where the clan stands today: what is in the warehouse, what you can craft right now and what changed last.') + '<div id="hm"></div>' + quick;
+    const box = $('#hm', host); let hist = [];
+    const draw = () => {
+      if (!$('#hm', host)) return;
+      const stockItems = Object.entries(store.stock).filter(([, q]) => q > 0), units = stockItems.reduce((a, [, q]) => a + q, 0);
+      const lEq = D.equipment.filter(i => store.learned[i.name]), lMat = D.materials.filter(m => store.learned[m.name]);
+      const res = lEq.map(i => ({ it: i, R: E.resolve(i.name, 1, store.stock, true) }));
+      const ready = res.filter(x => x.R.ok), near = res.filter(x => !x.R.ok).map(x => ({ it: x.it, n: x.R.rows.filter(r => !r.ok).length })).sort((a, b) => a.n - b.n || a.it.name.localeCompare(b.it.name)).slice(0, 5);
+      const last = hist[0];
+      const req = (it, extra) => `<div class="rowline"><button class="lnk" data-req="${esc(it.name)}">${esc(it.name)}</button> ${chip(it.grade, 'g-' + it.grade)}<span class="k">${extra}</span></div>`;
+      const acts = hist.slice(0, 8).map(h => `<div class="rowline"><span class="when">${esc(when(h.at))}</span> <b>${esc(short(h.by))}</b> ${esc(ACTION[h.action] || h.action)} ${link(h.item)}<span class="k">${typeof h.old_qty === 'number' ? `${num(h.old_qty)} → <b>${num(h.new_qty)}</b>` : ''}</span></div>`).join('');
+      box.innerHTML = `<div class="tiles">
+        <div class="card tile"><b>${num(stockItems.length)}</b><span>materials in the warehouse</span><small>${num(units)} units in total</small></div>
+        <div class="card tile"><b>${num(lEq.length)}</b><span>equipment recipes learned</span><small>${num(lMat.length)} material recipes ticked</small></div>
+        <div class="card tile"><b>${num(ready.length)}</b><span>ready to craft now</span><small>from the recipes you have learned</small></div>
+        <div class="card tile"><b class="sm">${last ? esc(short(last.by)) : '—'}</b><span>last change</span><small>${last ? esc(when(last.at)) + ' · ' + esc(ACTION[last.action] || last.action) : 'nothing yet'}</small></div></div>
+        <div class="cols2">
+          <div class="card"><h3 style="margin-top:0">Ready to craft now</h3>${ready.length ? ready.slice(0, 12).map(x => req(x.it, 'ready')).join('') + (ready.length > 12 ? `<p class="hint">…and ${ready.length - 12} more.</p>` : '') : '<p class="lead" style="margin:0">Nothing yet. Fill the warehouse and tick “Recipe already learned” in Requirements Check; learned recipes show up here when you hold everything for them.</p>'}
+            ${near.length ? `<h4 style="margin:16px 0 6px;font:700 12px var(--sans);text-transform:uppercase;letter-spacing:.1em;color:var(--muted)">Closest to ready</h4>${near.map(x => req(x.it, x.n + ' short')).join('')}` : ''}</div>
+          <div class="card"><h3 style="margin-top:0">Latest changes</h3>${acts || '<p class="lead" style="margin:0">No changes yet.</p>'}
+            <p class="hint"><a href="#/history">Open the full History →</a></p></div></div>`;
+    };
+    const refresh = () => B.history(8).then(h => { hist = h; draw(); }, () => draw());
+    host.onclick = e => {
+      const b = e.target.closest('[data-req]'); if (!b) return;
+      const it = itemByName[b.dataset.req], s = st('req'); s.grade = it.grade; s.item = it.name; s.filter = ''; go('reqcheck');
+    };
+    onData = refresh; draw(); refresh();
+  }
+}
+
 const VIEWS = [
+  { id: 'home', label: 'Home', group: '', render: homeView },
   { id: 'warehouse', label: 'Warehouse', group: 'Clan tools', render: gated(warehouseView) },
   { id: 'reqcheck', label: 'Requirements Check', group: 'Clan tools', render: gated(reqView) },
   { id: 'history', label: 'History', group: 'Clan tools', render: gated(historyView) },
@@ -820,7 +868,7 @@ function detail(name) {
 let current = null, openName = null;
 function parseHash() {
   const m = location.hash.replace(/^#\/?/, '').split('/');
-  return { view: viewById[m[0]] ? m[0] : 'start', name: m[1] ? decodeURIComponent(m.slice(1).join('/')) : null };
+  return { view: viewById[m[0]] ? m[0] : 'home', name: m[1] ? decodeURIComponent(m.slice(1).join('/')) : null };
 }
 function go(view, name) { location.hash = '#/' + view + (name ? '/' + encodeURIComponent(name) : ''); }
 function route() {
@@ -841,7 +889,8 @@ function showDrawer(name) {
 function hideDrawer() { $('#drawer').classList.remove('show'); $('#drawer').setAttribute('aria-hidden', 'true'); $('#scrim').classList.remove('show'); }
 function closeDrawer() { if (openName) go(current); }
 const ICON = {
-  start: 'M3 11l9-8 9 8M5 10v10h14V10',
+  home: 'M3 11l9-8 9 8M5 10v10h14V10',
+  start: 'M12 3l2.6 5.6 6.1.7-4.5 4.2 1.2 6L12 16.6 6.6 19.5l1.2-6L3.3 9.3l6.1-.7L12 3z',
   materials: 'M9 3h6M10 3v6l-5 9a2 2 0 002 3h10a2 2 0 002-3l-5-9V3',
   raw: 'M6 3h12l3 6-9 12L3 9l3-6zM3 9h18',
   matsrc: 'M12 21s-7-6-7-11a7 7 0 0114 0c0 5-7 11-7 11zM12 12a2 2 0 100-4 2 2 0 000 4z',
@@ -856,7 +905,7 @@ const ICON = {
 function renderNav() {
   let h = '', g = '';
   VIEWS.forEach(v => {
-    if (v.group !== g) { g = v.group; h += `<div class="navgroup">${esc(g)}</div>`; }
+    if (v.group !== g) { g = v.group; if (g) h += `<div class="navgroup">${esc(g)}</div>`; }
     h += `<a href="#/${v.id}" class="${v.id === current ? 'on' : ''}${v.soon ? ' later' : ''}"><span class="nl"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${ICON[v.id] || ICON.start}"/></svg>${esc(v.label)}</span>${v.soon ? '<span class="soon">soon</span>' : ''}</a>`;
   });
   $('#nav').innerHTML = `<div class="nav">${h}</div>`;
@@ -913,15 +962,16 @@ gs.addEventListener('keydown', e => {
   if (e.key === 'Enter' && resList[resIdx]) { $('#gres').classList.remove('show'); gs.blur(); go(current || 'start', resList[resIdx].n); }
 });
 $('#burger').addEventListener('click', () => $('#side').classList.toggle('open'));
+$('.brand').addEventListener('click', () => go('home'));
 const THEMES = ['gold', 'steel', 'parchment'];
 function setTheme(t, keep) {
   if (!THEMES.includes(t)) t = 'gold';
   document.documentElement.dataset.theme = t;
   document.querySelectorAll('#themes [data-theme]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.theme === t)));
-  if (!keep) try { localStorage.setItem('l2theme', t); } catch (e) { /* ignore */ }
+  if (!keep) try { localStorage.setItem('l2theme2', t); } catch (e) { /* ignore */ }
 }
-let saved = null; try { saved = localStorage.getItem('l2theme'); } catch (e) { /* ignore */ }
-setTheme(saved === 'light' ? 'parchment' : saved, true);   // 'dark' / nothing saved -> Dark Gold; the old light theme -> Parchment
+let saved = null; try { saved = localStorage.getItem('l2theme2'); } catch (e) { /* ignore */ }
+setTheme(saved, true);   // nothing chosen yet -> Dark Gold (the old light/dark switch is ignored)
 $('#themes').addEventListener('click', e => { const b = e.target.closest('[data-theme]'); if (b) setTheme(b.dataset.theme); });
 $('#foot').innerHTML = `Data from workbook <b>${esc(D.meta.version)}</b><br>${esc(D.meta.date)} · exported ${esc(D.meta.exported)}`;
 window.addEventListener('hashchange', route);

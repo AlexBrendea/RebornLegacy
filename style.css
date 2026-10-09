@@ -259,3 +259,18 @@ thead th { font-size: 11px; letter-spacing: .12em; border-bottom-color: var(--gl
 .themes button[data-theme="steel"] { background: linear-gradient(135deg, #0b1115 50%, #7fd0e6 50%); }
 .themes button[data-theme="parchment"] { background: linear-gradient(135deg, #efe8d8 50%, #8a2f2f 50%); }
 @media (max-width: 860px) { .online span { display: none; } }
+
+/* home */
+.brand { cursor: pointer; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin: 6px 0 4px; }
+.tile { margin: 8px 0; display: flex; flex-direction: column; gap: 2px; }
+.tile b { font: 700 34px/1.1 var(--serif); color: var(--accent); letter-spacing: .02em; }
+.tile b.sm { font-size: 22px; padding: 7px 0; }
+.tile span { font-weight: 600; }
+.tile small { color: var(--muted); }
+.quick { margin-top: 8px; }
+a.tl { display: block; text-decoration: none; color: var(--text); }
+a.tl:hover { border-color: var(--accent); }
+a.tl h3 { margin: 0 0 6px; }
+a.tl p { color: var(--muted); margin: 0; }
+.quick { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
