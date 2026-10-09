@@ -20,14 +20,21 @@
         <input id="gs" type="search" placeholder="Jump to any item, material or recipe… (press /)" autocomplete="off" aria-label="Search everything">
         <div class="results" id="gres" role="listbox"></div>
       </div>
+      <div class="who" id="who"></div>
       <button class="iconbtn" id="theme" title="Switch light / dark theme">Theme</button>
     </header>
     <main class="content" id="view"></main>
   </div>
 </div>
 <div class="scrim" id="scrim"></div>
+<div class="modal" id="modal" hidden></div>
+<div class="toast" id="toast" role="status"></div>
 <aside class="drawer" id="drawer" aria-label="Details" aria-hidden="true"></aside>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
 <script src="data.js"></script>
+<script src="engine.js"></script>
+<script src="backend.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

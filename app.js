@@ -30,6 +30,17 @@ const msByKey = {}; D.matSourcing.rows.forEach(r => (msByKey[r[0]] = msByKey[r[0
 const usedInItems = {}; D.equipment.forEach(it => it.ing.forEach(([n]) => (usedInItems[n] = usedInItems[n] || []).push(it)));
 const usedInMats = {}; D.materials.forEach(m => m.ing.forEach(([n]) => (usedInMats[n] = usedInMats[n] || []).push(m)));
 const recipeOf = {}; D.equipment.forEach(it => it.rk && (recipeOf[it.rk] = it)); D.materials.forEach(m => (recipeOf['Recipe: ' + m.name] = m));
+const E = window.L2Engine(D);
+D.equipment.forEach(it => { const sn = E.scrollName(it); if (sn) recipeOf[sn] = it; });
+
+/* warehouse data: lives in the shared database (or in this browser in test mode) - see backend.js */
+const B = window.L2Backend;
+let store = { stock: {}, learned: {}, meta: {} };
+let session = null, loaded = false, loadErr = null, loading = null, unsub = null, onData = null;
+const short = e => String(e || '').split('@')[0];
+const when = iso => (iso ? new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '');
+const sgn = n => (n > 0 ? '+' : n < 0 ? '−' : '') + num(Math.abs(n));
+const kindCls = k => ({ 'Raw material': 't-raw', 'Equipment part': 't-part', 'Crystal / Gemstone': 't-crystal', 'Recipe scroll': 't-recipe' }[k] || '');
 
 function kindOf(name) {
   if (itemByName[name]) return { label: 'Equipment · ' + itemByName[name].grade, cls: 'g-' + itemByName[name].grade };
@@ -158,7 +169,7 @@ function startView(el) {
   const tips = (sec('TIPS') || { lines: [] }).lines.filter(l => !/filter buttons|repeat on every row/i.test(l.t));
   const swatches = s => (s ? s.lines.map(l => `<div><span class="sw" style="background:#${l.fill || 'ccc'}"></span>${esc(l.t)}</div>`).join('') : '');
   el.innerHTML = head(L[0].t, L[1].t) + `
-    <div class="banner"><b>Web edition — step 1: reference tabs.</b> Everything below is read from the workbook (${esc(D.meta.version)}). The live clan Warehouse, the Requirements Check calculator and the History log will appear in the three greyed-out tabs once the shared database is connected.</div>
+    <div class="banner"><b>Web edition — shared warehouse.</b> The reference tabs are read from the workbook (${esc(D.meta.version)}). Warehouse, Requirements Check and History are the clan tools: sign in and both of you see and edit the same stock.</div>
     <div class="cols2">
       <div class="card"><h2>How to use this site</h2>
         <ul>
@@ -358,6 +369,355 @@ function soonView(title, lead, points) {
   };
 }
 
+
+function testBanner() {
+  return B.mode === 'local' ? '<div class="banner"><b>Test mode.</b> This copy is not connected to the shared database, so the warehouse below is saved in this browser only.</div>' : '';
+}
+function openModal(title, bodyHtml, okLabel, onOk, onCancel) {
+  const m = $('#modal');
+  m.innerHTML = `<div class="modalbox" role="dialog" aria-modal="true"><h2>${esc(title)}</h2>${bodyHtml}<div class="modalbtns"><button class="btn" data-mc>Cancel</button><button class="btn primary" data-mo>${esc(okLabel)}</button></div></div>`;
+  m.hidden = false; m._cancel = onCancel || null;
+  m.onclick = e => { if (e.target === m || e.target.closest('[data-mc]')) closeModal(true); else if (e.target.closest('[data-mo]')) { closeModal(); onOk(); } };
+  $('[data-mo]', m).focus();
+}
+function closeModal(cancelled) { const m = $('#modal'), c = m._cancel; m.hidden = true; m.innerHTML = ''; m._cancel = null; if (cancelled && c) c(); }
+let toastTimer = null;
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 3500); }
+function rerender() { const el = $('#view'); el.innerHTML = ''; viewById[current].render(el); }
+
+/* ------------------------------------------------- loading, login, live refresh */
+const draft = {};   // typed-but-unsaved warehouse numbers: item -> { val, base }  (base = the stock the person saw)
+async function reload() { try { store = await B.load(); loaded = true; loadErr = null; } catch (e) { loadErr = e; } }
+function ensureLoaded() { if (!loading) loading = reload().then(() => { loading = null; }); return loading; }
+let refreshTimer = null;
+function scheduleRefresh() {
+  clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(async () => { if (B.mode === 'shared' && !session) return; await reload(); if (onData && !loadErr) onData(); }, 350);
+}
+function errText(e) {
+  if (e && e.notAllowed) return 'This account is not on the allowed list. Ask the owner to add your e-mail.';
+  return (e && e.message) || String(e);
+}
+function gated(fn) {
+  return el => {
+    if (B.mode === 'shared' && !session) { loginView(el); return; }
+    const cv = current;
+    const draw = () => {
+      if (current !== cv || $('#view') !== el) return;
+      el.innerHTML = '';
+      if (loadErr) errorView(el); else fn(el);
+    };
+    if (!loaded) { el.innerHTML = '<div class="card"><p class="lead" style="margin:0">Loading the warehouse…</p></div>'; ensureLoaded().then(draw); } else fn(el);
+  };
+}
+function errorView(el) {
+  el.innerHTML = `<div class="card"><h2 style="margin-top:0">The warehouse could not be loaded</h2><p class="lead">${esc(errText(loadErr))}</p><button class="btn" id="retry">Try again</button></div>`;
+  $('#retry', el).addEventListener('click', () => { loadErr = null; loaded = false; rerender(); });
+}
+function loginView(el) {
+  el.innerHTML = head('Sign in', 'The clan tools (Warehouse, Requirements Check, History) are shared by two people. Sign in with the account you were given.') + `
+    <form class="card login" id="lf">
+      <label>E-mail<input type="email" id="le" autocomplete="username" required></label>
+      <label>Password<input type="password" id="lp" autocomplete="current-password" required></label>
+      <div class="commitbar"><button class="btn primary" type="submit">Sign in</button><span class="err" id="lerr" role="alert"></span></div>
+    </form>`;
+  $('#lf', el).addEventListener('submit', async e => {
+    e.preventDefault();
+    const btn = $('button[type=submit]', el), err = $('#lerr', el);
+    btn.disabled = true; err.textContent = '';
+    let r; try { r = await B.signIn($('#le', el).value.trim(), $('#lp', el).value); } catch (x) { r = { error: errText(x) }; }
+    if (r.error) { btn.disabled = false; err.textContent = /invalid login/i.test(r.error) ? 'Wrong e-mail or password.' : r.error; }
+  });
+  $('#le', el).focus();
+}
+function renderWho() {
+  const w = $('#who');
+  if (B.mode === 'local') w.innerHTML = '<span class="tag">test mode</span>';
+  else if (session) w.innerHTML = `<span class="whoname" title="${esc(session.email)}">${esc(short(session.email))}</span><button class="iconbtn" id="signout">Sign out</button>`;
+  else w.innerHTML = '<a class="iconbtn" href="#/warehouse">Sign in</a>';
+}
+function setSession(user) {
+  session = user; loaded = false; loadErr = null; loading = null; store = { stock: {}, learned: {}, meta: {} };
+  Object.keys(draft).forEach(k => delete draft[k]);
+  if (unsub) { unsub(); unsub = null; }
+  if (user || B.mode === 'local') unsub = B.subscribe(scheduleRefresh);
+  renderWho();
+  if (viewById[current] && viewById[current].group === 'Clan tools') rerender();
+}
+const conflictLines = list => list.map(c => `<div class="rowline"><span>${esc(c.item)}</span><span class="k">now <b>${num(c.current)}</b>${c.by ? ` · changed by ${esc(short(c.by))} ${esc(when(c.at))}` : ''} <span class="hint">(you saw ${num(c.expected)}${c.new != null ? `, you wanted ${num(c.new)}` : ''})</span></span></div>`).join('');
+
+/* ---------------------------------------------------------------- Warehouse */
+function warehouseView(el) {
+  const s = st('wh');
+  const rows = D.catalogue.map(([cat, name, grade, intro]) => ({ cat, name, grade, intro }));
+  const tier = cat => (cat === 'Raw Material' ? 'raw' : /^Tier (\d)/.test(cat) ? cat.slice(5) : cat === 'Recipe' ? 'recipe' : cat === 'Equipment Part' ? 'part' : 'crystal');
+  const root = document.createElement('div'); root.className = 'whwrap' + (s.stk ? ' stocktake' : ''); el.appendChild(root);
+  root.innerHTML = head('Warehouse', 'Type the quantity you actually hold in the game warehouse and press Update — the site stores that number, so there is no need to work out what to add. Both of you see the same numbers.') + testBanner() + `
+    <div class="controls">
+      <button class="btn" data-act="stk" aria-pressed="${!!s.stk}">Stock-take mode: ${s.stk ? 'on' : 'off'}</button>
+      <button class="btn" data-act="csv">Download CSV</button>
+      ${B.canDemo ? `<button class="btn" data-act="demo">Load demo stock</button><button class="btn" data-act="reset">Reset all to 0</button><button class="btn" data-act="export">Export JSON</button><button class="btn" data-act="import">Import JSON</button><input type="file" id="imp" accept="application/json,.json" hidden>` : ''}
+    </div>
+    <p class="hint" id="stkhint"${s.stk ? '' : ' hidden'}>Stock-take: type the counts from the game, press Enter to jump to the next row, then press <b>Save all</b>. Filters and search keep what you typed.</p>
+    <div id="t"></div><div class="draftbar" id="draftbar" hidden></div>`;
+  const lcHtml = n => { const m = store.meta[n]; return m && m.at ? `${esc(short(m.by))} · ${esc(when(m.at))}` : ''; };
+  const val = inp => Math.min(2000000000, Math.max(0, Math.floor(Number(inp.value)) || 0));
+  const cell = r => {
+    const d = draft[r.name], cur = store.stock[r.name] || 0, v = d ? d.val : cur, base = d ? d.base : cur, dl = v - cur;
+    return `<span class="setto"><input type="number" min="0" step="1" inputmode="numeric" value="${v}" data-in="${esc(r.name)}" data-base="${base}" aria-label="New quantity of ${esc(r.name)}"><button class="btn" data-upd="${esc(r.name)}">Update</button><span class="delta ${dl > 0 ? 'up' : dl < 0 ? 'down' : ''}">${dl ? `(${sgn(dl)})` : ''}</span></span>`;
+  };
+  makeTable($('#t', root), {
+    rows, noun: 'materials', pageSize: 100, placeholder: 'Search material…',
+    search: r => r.name + ' ' + r.cat,
+    stripe: r => tierColor(tier(r.cat)),
+    filters: [
+      { id: 'cat', label: 'Category', options: uniq(rows.map(r => r.cat)), test: (r, v) => r.cat === v },
+      { id: 'g', label: 'Grade', options: uniq(rows.map(r => r.grade)).filter(g => g !== '—').sort(byOrder(GRADES)), test: (r, v) => r.grade === v },
+      { id: 'i', label: 'Introduced', options: uniq(rows.map(r => r.intro)).filter(x => x !== '—').sort(byOrder(CHRON)), test: (r, v) => r.intro === v },
+    ],
+    cols: [
+      { key: 'cat', label: 'Category', cls: 'hm', get: r => r.cat, html: r => esc(r.cat) },
+      { key: 'n', label: 'Material', get: r => r.name, cls: 'wrap', html: r => link(r.name) },
+      { key: 'g', label: 'Grade', cls: 'hm', get: r => GRADES.indexOf(r.grade), html: r => (r.grade === '—' ? '<span style="color:var(--muted)">—</span>' : chip(r.grade, 'g-' + r.grade)) },
+      { key: 'i', label: 'Introduced', cls: 'hm', get: r => CHRON.indexOf(r.intro), html: r => (r.intro === '—' ? '<span style="color:var(--muted)">—</span>' : `<span class="chr">${esc(r.intro)}</span>`) },
+      { key: 'q', label: 'In stock', cls: 'num', get: r => store.stock[r.name] || 0, html: r => `<span data-q="${esc(r.name)}">${num(store.stock[r.name] || 0)}</span>` },
+      { key: 'lc', label: 'Last change', cls: 'hm', get: r => (store.meta[r.name] || {}).at || '', html: r => `<span class="when" data-lc="${esc(r.name)}">${lcHtml(r.name)}</span>` },
+      { key: 'set', label: 'Set to', nosort: true, get: () => '', html: cell },
+    ],
+  }, s);
+
+  const showDelta = inp => {
+    const n = inp.dataset.in, d = draft[n] ? draft[n].val - (store.stock[n] || 0) : 0, out = inp.parentNode.querySelector('.delta');
+    out.textContent = d ? `(${sgn(d)})` : ''; out.className = 'delta ' + (d > 0 ? 'up' : d < 0 ? 'down' : '');
+  };
+  const drawBar = () => {
+    const bar = $('#draftbar', root), n = Object.keys(draft).length;
+    bar.hidden = !n;
+    bar.innerHTML = n ? `<span><b>${n}</b> unsaved change${n > 1 ? 's' : ''}</span><button class="btn primary" data-act="saveall">Save all</button><button class="btn" data-act="discard">Discard</button>` : '';
+  };
+  function refreshCells() {
+    root.querySelectorAll('[data-q]').forEach(c => { c.textContent = num(store.stock[c.dataset.q] || 0); });
+    root.querySelectorAll('[data-lc]').forEach(c => { c.innerHTML = lcHtml(c.dataset.lc); });
+    root.querySelectorAll('[data-in]').forEach(inp => { const n = inp.dataset.in, cur = store.stock[n] || 0; if (!draft[n]) { inp.value = cur; inp.dataset.base = cur; } else inp.dataset.base = draft[n].base; showDelta(inp); });
+    drawBar();
+  }
+  onData = refreshCells;
+
+  async function saveBatch(changes, action, okMsg) {
+    let r;
+    try { r = await B.apply(changes, action); } catch (e) { toast('Could not save — ' + errText(e)); return false; }
+    if (r.ok) { changes.forEach(c => delete draft[c.item]); await reload(); refreshCells(); toast(okMsg || `Saved ${changes.length} change${changes.length > 1 ? 's' : ''}.`); return true; }
+    await reload(); refreshCells();
+    openModal('Someone changed this first', `<p class="lead">The warehouse changed while you were typing:</p><div class="changes">${conflictLines(r.conflicts)}</div><p class="hint">Nothing was saved. Overwrite with your numbers anyway?</p>`, 'Set anyway', async () => {
+      const now = Object.fromEntries(r.conflicts.map(c => [c.item, c.current]));
+      await saveBatch(changes.map(c => (c.item in now ? Object.assign({}, c, { expected: now[c.item] }) : c)), action, okMsg);
+    }, () => { r.conflicts.forEach(c => { if (draft[c.item]) draft[c.item].base = c.current; }); refreshCells(); });
+    return false;
+  }
+
+  root.addEventListener('input', e => {
+    const inp = e.target.closest('[data-in]'); if (!inp) return;
+    const n = inp.dataset.in, cur = store.stock[n] || 0;
+    if (inp.value === '') delete draft[n];
+    else { const v = val(inp); if (v === cur) delete draft[n]; else (draft[n] = draft[n] || { base: Number(inp.dataset.base) }).val = v; }
+    showDelta(inp); drawBar();
+  });
+  root.addEventListener('keydown', e => {
+    const inp = e.target.closest('[data-in]'); if (!inp || e.key !== 'Enter') return;
+    if (s.stk) { const all = [...root.querySelectorAll('[data-in]')], nx = all[all.indexOf(inp) + 1]; if (nx) { nx.focus(); nx.select(); } }
+    else inp.parentNode.querySelector('[data-upd]').click();
+  });
+  root.addEventListener('click', async e => {
+    const u = e.target.closest('[data-upd]');
+    if (u) {
+      const name = u.dataset.upd, inp = u.parentNode.querySelector('[data-in]');
+      if (inp.value === '') { toast('Type a number first.'); return; }
+      const v = val(inp), cur = store.stock[name] || 0, base = Number(inp.dataset.base);
+      if (v === cur && base === cur) { delete draft[name]; inp.value = cur; showDelta(inp); drawBar(); toast('No change — that is already the stored number.'); return; }
+      u.disabled = true;
+      const ok = await saveBatch([{ item: name, new: v, expected: base }], 'set', `${name}: ${num(cur)} → ${num(v)}`);
+      u.disabled = false;
+      if (ok) { u.textContent = 'Saved ✓'; setTimeout(() => (u.textContent = 'Update'), 900); }
+      return;
+    }
+    const act = e.target.closest('[data-act]'); if (!act) return;
+    const a = act.dataset.act;
+    if (a === 'stk') {
+      s.stk = !s.stk; root.classList.toggle('stocktake', s.stk); act.textContent = 'Stock-take mode: ' + (s.stk ? 'on' : 'off'); act.setAttribute('aria-pressed', String(!!s.stk)); $('#stkhint', root).hidden = !s.stk;
+    } else if (a === 'saveall') {
+      const changes = Object.entries(draft).map(([item, d]) => ({ item, new: d.val, expected: d.base }));
+      if (!changes.length) return;
+      act.disabled = true; await saveBatch(changes, 'stocktake', `Stock-take saved (${changes.length} item${changes.length > 1 ? 's' : ''}).`); act.disabled = false;
+    } else if (a === 'discard') {
+      Object.keys(draft).forEach(k => delete draft[k]); refreshCells();
+    } else if (a === 'csv') {
+      const q = v => (/[",\r\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : String(v));
+      const lines = [['Category', 'Material', 'Grade', 'Introduced', 'In stock']].concat(rows.map(r => [r.cat, r.name, r.grade === '—' ? '' : r.grade, r.intro === '—' ? '' : r.intro, store.stock[r.name] || 0]));
+      download('l2-warehouse-' + new Date().toISOString().slice(0, 10) + '.csv', '﻿' + lines.map(l => l.map(q).join(',')).join('\r\n'), 'text/csv;charset=utf-8');
+    } else if (a === 'demo') {
+      const st0 = {}; rows.forEach(r => { const t = tier(r.cat), v = t === 'raw' ? 3000 : t === 'crystal' ? 5000 : t === 'part' ? 30 : t === 'recipe' ? 3 : 0; if (v) st0[r.name] = v; });
+      await B.replaceAll(st0, store.learned); await reload(); rerender(); toast('Demo stock loaded.');
+    } else if (a === 'reset') {
+      if (confirm('Set every quantity back to 0 and forget which recipes are learned?')) { await B.replaceAll({}, {}); Object.keys(draft).forEach(k => delete draft[k]); await reload(); rerender(); toast('Warehouse cleared.'); }
+    } else if (a === 'export') {
+      download('l2-test-warehouse.json', JSON.stringify(await B.dump(), null, 1), 'application/json');
+    } else if (a === 'import') $('#imp', root).click();
+  });
+  const imp = $('#imp', root);
+  if (imp) imp.addEventListener('change', e => {
+    const f = e.target.files[0]; if (!f) return;
+    const rd = new FileReader();
+    rd.onload = async () => {
+      try {
+        const j = JSON.parse(rd.result);
+        if (!j || typeof j.stock !== 'object') throw new Error('not a warehouse file');
+        await B.replaceAll(j.stock, j.learned || {}); await reload(); rerender(); toast('Warehouse imported.');
+      } catch (err) { toast('Could not read that file.'); }
+    };
+    rd.readAsText(f);
+  });
+}
+function download(name, text, type) {
+  const blob = new Blob([text], { type }), url = URL.createObjectURL(blob), l = document.createElement('a');
+  l.href = url; l.download = name; document.body.appendChild(l); l.click(); l.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/* ------------------------------------------------------------------ History */
+const ACTION = { set: 'Update', stocktake: 'Stock-take', commit: 'Commit', learn: 'Recipe learned', unlearn: 'Recipe un-learned' };
+function historyView(el) {
+  const s = st('hist');
+  el.innerHTML = head('History', 'Every change to the shared warehouse — who, what and when. Newest first (last 1,000 entries). A Commit shows one line per material it used.') + testBanner() + '<div id="t"><p class="lead">Loading…</p></div>';
+  const draw = list => {
+    const host = $('#t', el); if (!host || current !== 'history') return;
+    const rows = list.map(h => ({ id: h.id, at: h.at, by: short(h.by), action: ACTION[h.action] || h.action, item: h.item, o: h.old_qty, n: h.new_qty, label: h.label || '' }));
+    makeTable(host, {
+      rows, noun: 'entries', pageSize: 150, placeholder: 'Search item, person or note…',
+      search: r => [r.item, r.by, r.action, r.label].join(' '),
+      filters: [
+        { id: 'p', label: 'Person', options: uniq(rows.map(r => r.by)).sort(), test: (r, v) => r.by === v },
+        { id: 'a', label: 'Action', options: uniq(rows.map(r => r.action)), test: (r, v) => r.action === v },
+      ],
+      cols: [
+        { key: 'at', label: 'When', get: r => r.id, html: r => esc(when(r.at)) },
+        { key: 'by', label: 'Who', get: r => r.by, html: r => esc(r.by) },
+        { key: 'a', label: 'Action', get: r => r.action, html: r => esc(r.action) },
+        { key: 'i', label: 'Item', cls: 'wrap', get: r => r.item, html: r => link(r.item) },
+        { key: 'c', label: 'Change', cls: 'num', get: r => (r.n == null ? 0 : r.n - r.o), html: r => (r.n == null ? '<span style="color:var(--muted)">—</span>' : `${num(r.o)} → <b>${num(r.n)}</b> <span class="${r.n < r.o ? 'neg' : 'pos'}">(${sgn(r.n - r.o)})</span>`) },
+        { key: 'l', label: 'Note', cls: 'hm wrap', get: r => r.label, html: r => esc(r.label) },
+      ],
+    }, s);
+  };
+  const fetchAll = () => B.history(1000).then(draw).catch(e => { const h = $('#t', el); if (h) h.innerHTML = `<p class="lead">${esc(errText(e))}</p>`; });
+  onData = fetchAll; fetchAll();
+}
+
+function treeHtml(n) {
+  const mat = E.matByName[n.name];
+  let tags = '';
+  if (n.fromStock > 0) tags += `<span class="tag">in stock ${num(n.fromStock)}</span>`;
+  if (mat && n.crafts > 0) tags += `<span class="tag craft">craft ${num(n.crafted)}${n.makes > n.crafted ? ` · ${n.crafts} batch${n.crafts > 1 ? 'es' : ''} make ${num(n.makes)}` : n.crafts !== n.crafted ? ` · ${n.crafts} crafts` : ''}</span>`;
+  if (!mat && n.missing > 0) tags += `<span class="tag bad">need ${num(n.missing)} more</span>`;
+  const kids = n.children.length ? `<ul>${n.children.map(treeHtml).join('')}</ul>` : '';
+  return `<li>${link(n.name)} <span class="x">×${num(n.needed)}</span> ${tags}${kids}</li>`;
+}
+
+function resultHtml(R) {
+  const it = R.item, bad = R.rows.filter(r => !r.ok).length;
+  const rowsHtml = R.rows.map(r => `<tr>
+      <td>${link(r.name)}${r.isScroll ? ' <span class="chip t-recipe">scroll</span>' : ''}</td>
+      <td class="num">${num(r.needed)}</td><td class="num">${num(r.warehouse)}</td>
+      <td class="num">${r.short ? num(r.short) : '—'}</td>
+      <td class="num">${r.short && r.kind === 'Material' ? num(r.craftable) : '—'}</td>
+      <td class="num bal ${r.balance >= 0 ? 'ok' : 'bad'}">${sgn(r.balance)}</td>
+      <td><span class="st ${r.ok ? 'ok' : 'bad'}">${r.ok ? 'OK' : 'SHORT'}</span></td></tr>`).join('');
+  const crafted = R.rows.filter(r => r.node.crafts > 0);
+  const tree = crafted.length
+    ? `<ul class="tree">${crafted.map(r => treeHtml(r.node)).join('')}</ul>`
+    : `<p class="lead">${R.ok ? 'Everything is already in the warehouse — nothing to craft.' : 'None of the missing ingredients can be crafted. They have to be farmed (see the list below).'}</p>`;
+  const order = ['Raw material', 'Equipment part', 'Recipe scroll', 'Crystal / Gemstone'];
+  const shop = R.shopping.slice().sort((a, b) => (order.indexOf(a.kind) + 1 || 9) - (order.indexOf(b.kind) + 1 || 9) || a.name.localeCompare(b.name));
+  const scrollNote = R.scroll
+    ? (R.scroll.consumed
+      ? `Recipe scroll: consumed on every craft${R.scroll.learned ? '' : ', plus 1 more to learn the recipe the first time'}.`
+      : `Recipe scroll: reusable at ${it.grade}-grade — 1 scroll to learn it, then never again.`)
+    : (E.REUSABLE.has(it.grade) ? 'Recipe already learned (reusable at this grade).' : '');
+  return `<div class="reqgrid">
+    <div class="card">
+      <div class="reqhead"><div><h2>${esc(it.name)} ×${R.qty}</h2>
+        <div class="meta">${chip(it.grade, 'g-' + it.grade)} <span class="chr">${esc(it.intro)}</span> ${esc(it.type)} · Skill lvl ${num(it.skill)} · Success ${pct(it.succ)} · MP ${num(it.mp)}</div></div>
+        <div class="verdict ${R.ok ? 'ok' : 'bad'}">${R.ok ? 'Ready to craft' : bad + ' ingredient' + (bad > 1 ? 's' : '') + ' short'}</div></div>
+      <div class="tablewrap flat"><table class="req"><thead><tr><th>Ingredient</th><th class="num">Needed</th><th class="num">Warehouse</th><th class="num">To craft</th><th class="num" title="How many of the missing units you could make right now from materials in stock">Craftable</th><th class="num">Balance</th><th>Status</th></tr></thead><tbody>${rowsHtml}</tbody></table></div>
+      ${scrollNote ? `<p class="hint">${esc(scrollNote)}</p>` : ''}
+      <div class="commitbar"><button class="btn primary" id="commit"${R.ok ? '' : ' disabled'}>Commit</button>
+        <span class="hint">${R.ok ? 'Subtracts these materials from the warehouse (you will see the changes first).' : 'Commit unlocks when every balance is green.'}</span></div>
+    </div>
+    <div class="card"><h3 style="margin-top:0">Sub-materials to craft</h3>${tree}</div>
+  </div>
+  ${shop.length ? `<div class="card"><h3 style="margin-top:0">Still to get (${shop.length})</h3>
+    <div class="tablewrap flat"><table><thead><tr><th>Item</th><th>Kind</th><th class="num">Required</th><th class="num">In warehouse</th><th class="num">Still needed</th></tr></thead><tbody>
+    ${shop.map(l => `<tr><td>${link(l.name)}</td><td>${chip(l.kind, kindCls(l.kind))}</td><td class="num">${num(l.required)}</td><td class="num">${num(l.warehouse)}</td><td class="num bal bad">${num(l.missing)}</td></tr>`).join('')}
+    </tbody></table></div></div>` : ''}`;
+}
+
+function reqView(el) {
+  const s = st('req');
+  s.grade = s.grade || gradeOpts[0]; s.qty = s.qty || 1; s.filter = s.filter || '';
+  el.innerHTML = head('Requirements Check', 'Pick a grade, an item and how many to craft. Each ingredient is checked against the warehouse; anything short is broken down into the sub-materials you still need.') + testBanner() + `
+    <div class="card reqctl">
+      <label>Grade<select id="rg">${gradeOpts.map(g => `<option${g === s.grade ? ' selected' : ''}>${g}</option>`).join('')}</select></label>
+      <label class="grow">Item<span class="pair"><input type="search" id="rf" placeholder="Filter items…" value="${esc(s.filter)}"><select id="ri"></select></span></label>
+      <label>Quantity<input type="number" id="rq" min="1" max="999" step="1" value="${s.qty}"></label>
+      <label class="tog"><input type="checkbox" id="rl"> Recipe already learned</label>
+    </div><div id="rout"></div>`;
+  const ri = $('#ri', el), out = $('#rout', el);
+  function fillItems() {
+    const q = lc(s.filter), items = D.equipment.filter(i => i.grade === s.grade && (!q || lc(i.name + ' ' + i.type).includes(q)));
+    const groups = {}; items.forEach(i => (groups[i.type.split(' — ')[0]] = groups[i.type.split(' — ')[0]] || []).push(i));
+    ri.innerHTML = items.length ? Object.entries(groups).map(([g, l]) => `<optgroup label="${esc(g)}">${l.map(i => `<option value="${esc(i.name)}">${esc(i.name)}</option>`).join('')}</optgroup>`).join('') : '<option value="">No match</option>';
+    if (!items.some(i => i.name === s.item)) s.item = items.length ? items[0].name : null;
+    ri.value = s.item || '';
+  }
+  function render() {
+    const it = s.item && E.itemByName[s.item];
+    if (!it) { out.innerHTML = '<p class="lead">No item matches the filter.</p>'; return; }
+    const learned = !!store.learned[it.name]; $('#rl', el).checked = learned;
+    out.innerHTML = resultHtml(E.resolve(it.name, s.qty, store.stock, learned));
+  }
+  fillItems(); render();
+  $('#rg', el).addEventListener('change', e => { s.grade = e.target.value; fillItems(); render(); });
+  $('#rf', el).addEventListener('input', e => { s.filter = e.target.value; fillItems(); render(); });
+  ri.addEventListener('change', e => { s.item = e.target.value; render(); });
+  $('#rq', el).addEventListener('input', e => { const v = Math.floor(Number(e.target.value)); if (v >= 1) { s.qty = Math.min(v, 999); render(); } });
+  $('#rl', el).addEventListener('change', async e => {
+    const chk = e.target.checked, prev = !!store.learned[s.item], item = s.item;
+    if (chk) store.learned[item] = true; else delete store.learned[item];
+    render();
+    try { await B.setLearned(item, chk); } catch (err) { if (prev) store.learned[item] = true; else delete store.learned[item]; render(); toast('Could not save — ' + errText(err)); }
+  });
+  onData = render;
+  out.addEventListener('click', e => {
+    if (!e.target.closest('#commit')) return;
+    const R = E.resolve(s.item, s.qty, store.stock, !!store.learned[s.item]);
+    if (!R.ok) return;
+    const list = R.changes.slice().sort((a, b) => a.name.localeCompare(b.name)).map(c => `<div class="rowline"><span>${esc(c.name)}</span><span class="k">${num(c.before)} → <b>${num(c.after)}</b> <span class="${c.after < c.before ? 'neg' : 'pos'}">(${sgn(c.after - c.before)})</span></span></div>`).join('');
+    openModal(`Commit ${R.item.name} ×${R.qty}?`,
+      `<p class="lead">These warehouse quantities will change:</p><div class="changes">${list || '<p class="lead">No stock changes.</p>'}</div>${store.learned[s.item] ? '' : '<p class="hint">This recipe will be marked as learned.</p>'}`,
+      'Commit', async () => {
+        const btn = $('#commit', el); if (btn) btn.disabled = true;
+        const changes = R.changes.map(c => ({ item: c.name, new: c.after, expected: c.before }));
+        let res;
+        try { res = await B.apply(changes, 'commit', `Commit ${R.item.name} ×${R.qty}`, R.item.name); } catch (err) { toast('Could not commit — ' + errText(err)); render(); return; }
+        await reload();
+        if (current === 'reqcheck') render();
+        if (!res.ok) {
+          openModal('The warehouse changed — nothing was committed', `<p class="lead">Someone changed these numbers after you ran the check:</p><div class="changes">${conflictLines(res.conflicts)}</div><p class="hint">The check below has been refreshed with the new numbers. Look it over and commit again if it is still green.</p>`, 'OK', () => {});
+          return;
+        }
+        toast(`Committed ${R.item.name} ×${R.qty}.`);
+      });
+  });
+}
+
 const VIEWS = [
   { id: 'start', label: 'Start Here', group: 'Reference', render: startView },
   { id: 'materials', label: 'Material Recipes', group: 'Reference', render: materialsView },
@@ -367,9 +727,9 @@ const VIEWS = [
   { id: 'equipsrc', label: 'Equipment Sourcing', group: 'Reference', render: equipSourcingView },
   { id: 'notes', label: 'Notes', group: 'Reference', render: notesView },
   { id: 'audit', label: 'Audit Log', group: 'Reference', render: auditView },
-  { id: 'warehouse', label: 'Warehouse', group: 'Clan (live)', soon: true, render: soonView('Warehouse', 'The shared clan stock.', ['Current quantity of every material, recipe scroll, part and crystal, filtered by category and grade.', 'Add and Remove buttons for deposits and withdrawals — both of you see the same numbers.']) },
-  { id: 'reqcheck', label: 'Requirements Check', group: 'Clan (live)', soon: true, render: soonView('Requirements Check', 'The crafting calculator.', ['Pick a grade, an item and a quantity: see Needed vs Warehouse vs Balance.', 'Missing ingredients are broken down into the sub-materials you still need.', 'Commit (enabled when every balance is green) subtracts the materials from the shared warehouse in one step.']) },
-  { id: 'history', label: 'History', group: 'Clan (live)', soon: true, render: soonView('History', 'Who changed what, and when.', ['Every deposit, withdrawal and commit with the person and the time.']) },
+  { id: 'warehouse', label: 'Warehouse', group: 'Clan tools', render: gated(warehouseView) },
+  { id: 'reqcheck', label: 'Requirements Check', group: 'Clan tools', render: gated(reqView) },
+  { id: 'history', label: 'History', group: 'Clan tools', render: gated(historyView) },
 ];
 const viewById = Object.fromEntries(VIEWS.map(v => [v.id, v]));
 
@@ -408,7 +768,7 @@ function detail(name) {
     body += `<h4>Recipe scroll — where to get it</h4>${sourcesHtml(msByKey['Recipe: ' + name], 'ms')}`;
   } else {
     h += '</div>';
-    const eRows = esByKey[name], mRows = msByKey[name];
+    const eRows = esByKey[name] || esByKey['Recipe: Sealed ' + name.replace(/^Recipe: /, '')], mRows = msByKey[name];
     if (eRows) body += `<h4>Where to get it</h4>${sourcesHtml(eRows, 'eq')}`;
     if (mRows) body += `<h4>Where to get it</h4>${sourcesHtml(mRows, 'ms')}`;
     const target = recipeOf[name];
@@ -435,7 +795,7 @@ function go(view, name) { location.hash = '#/' + view + (name ? '/' + encodeURIC
 function route() {
   const { view, name } = parseHash();
   if (view !== current) {
-    current = view;
+    current = view; onData = null;
     const el = $('#view'); el.innerHTML = '';
     viewById[view].render(el);
     document.title = viewById[view].label + ' · L2 Reborn Recipe Tracker';
@@ -483,6 +843,7 @@ function drawResults() {
 
 /* --------------------------------------------------------------------- setup */
 document.addEventListener('click', e => {
+  if (e.target.id === 'signout') { B.signOut(); return; }
   const o = e.target.closest('[data-open]');
   if (o) {
     $('#gres').classList.remove('show');
@@ -492,7 +853,7 @@ document.addEventListener('click', e => {
   if (!e.target.closest('.gsearch')) $('#gres').classList.remove('show');
 });
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { $('#gres').classList.remove('show'); closeDrawer(); }
+  if (e.key === 'Escape') { $('#gres').classList.remove('show'); if (!$('#modal').hidden) closeModal(true); else closeDrawer(); }
   if (e.key === '/' && !/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) { e.preventDefault(); $('#gs').focus(); }
 });
 const gs = $('#gs');
@@ -514,5 +875,7 @@ setTheme(saved || (matchMedia('(prefers-color-scheme: light)').matches ? 'light'
 $('#theme').addEventListener('click', () => setTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light'));
 $('#foot').innerHTML = `Data from workbook <b>${esc(D.meta.version)}</b><br>${esc(D.meta.date)} · exported ${esc(D.meta.exported)}`;
 window.addEventListener('hashchange', route);
-route();
+document.addEventListener('visibilitychange', () => { if (!document.hidden && loaded && (session || B.mode === 'local')) scheduleRefresh(); });
+B.onAuth(setSession);
+B.init().then(u => { session = u; if (u) unsub = B.subscribe(scheduleRefresh); }, () => {}).then(() => { renderWho(); route(); });
 })();
