@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>L2 Reborn Recipe Tracker</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <nav class="side" id="side" aria-label="Sections">
+    <div class="brand">Reborn: Legacy<small>Equipment Recipe Tracker</small></div>
+    <div id="nav"></div>
+    <div class="side-foot" id="foot"></div>
+  </nav>
+  <div class="main">
+    <header class="top">
+      <button class="burger" id="burger" aria-label="Open menu">☰</button>
+      <div class="gsearch">
+        <input id="gs" type="search" placeholder="Jump to any item, material or recipe… (press /)" autocomplete="off" aria-label="Search everything">
+        <div class="results" id="gres" role="listbox"></div>
+      </div>
+      <button class="iconbtn" id="theme" title="Switch light / dark theme">Theme</button>
+    </header>
+    <main class="content" id="view"></main>
+  </div>
+</div>
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-label="Details" aria-hidden="true"></aside>
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
