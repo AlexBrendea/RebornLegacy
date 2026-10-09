@@ -56,6 +56,25 @@ function makeShared() {
       } catch (e) { /* live updates are a bonus; the page also refreshes when you come back to it */ }
       return () => { try { ch && client.removeChannel(ch); } catch (e) { /* ignore */ } };
     },
+    /* Who is online right now (Supabase Presence). Only the part of the e-mail before the @ is shared.
+       Uses a private channel when the database allows it (supabase/presence.sql); otherwise a public one. */
+    presence(cb) {
+      if (!user) return () => {};
+      const handle = String(user.email).split('@')[0];
+      let ch = null, dead = false;
+      const open = priv => {
+        const c = client.channel('l2-online', { config: Object.assign({ presence: { key: handle } }, priv ? { private: true } : {}) });
+        c.on('presence', { event: 'sync' }, () => { try { cb(Object.keys(c.presenceState())); } catch (e) { /* ignore */ } });
+        c.subscribe(async status => {
+          if (dead) return;
+          if (status === 'SUBSCRIBED') { try { await c.track({ at: new Date().toISOString() }); } catch (e) { /* ignore */ } }
+          else if (priv && (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT')) { try { client.removeChannel(c); } catch (e) { /* ignore */ } if (!dead) ch = open(false); }
+        });
+        return c;
+      };
+      try { ch = open(true); } catch (e) { /* online status is a bonus */ }
+      return () => { dead = true; try { ch && client.removeChannel(ch); } catch (e) { /* ignore */ } };
+    },
   };
 }
 

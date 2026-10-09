@@ -156,7 +156,7 @@ function makeTable(host, cfg, st) {
 /* --------------------------------------------------------------------- views */
 const state = {};
 const st = id => (state[id] = state[id] || {});
-const head = (title, lead) => `<h1>${esc(title)}</h1>${lead ? `<p class="lead">${esc(lead)}</p>` : ''}`;
+const head = (title, lead) => `<h1>${esc(title)}</h1><div class="orn"><i></i><b></b><i></i></div>${lead ? `<p class="lead">${esc(lead)}</p>` : ''}`;
 const gradeOpts = GRADES.filter(g => D.equipment.some(i => i.grade === g));
 const chronOpts = CHRON.filter(c => D.equipment.some(i => i.intro === c) || D.equipSourcing.rows.some(r => r[3] === c) || D.matSourcing.rows.some(r => r[1] === c));
 
@@ -445,7 +445,21 @@ function loginView(el) {
   });
   $('#le', el).focus();
 }
+let unpres = null, onlineNow = [];
+function renderOnline() {
+  const el = $('#online');
+  if (B.mode !== 'shared' || !session || !B.presence) { el.hidden = true; return; }
+  const me = short(session.email), others = onlineNow.filter(n => n !== me);
+  el.hidden = false; el.classList.toggle('alone', !others.length);
+  el.title = others.length ? 'Online now: ' + [me].concat(others).join(', ') : 'Only you are online right now';
+  el.innerHTML = others.length ? `<i></i><span>${esc(others.join(', '))} online</span>` : '<i></i><span>Only you online</span>';
+}
+function stopPresence() { if (unpres) { unpres(); unpres = null; } onlineNow = []; renderOnline(); }
+function startPresence() { stopPresence(); if (B.mode === 'shared' && session && B.presence) unpres = B.presence(list => { onlineNow = list; renderOnline(); }); }
+/* only accounts on the allowed list take part in the online status (the warehouse has to load first) */
+function maybePresence() { if (B.mode !== 'shared' || !session) return; ensureLoaded().then(() => { if (session && loaded && !unpres) startPresence(); }); }
 function renderWho() {
+  renderOnline();
   const w = $('#who');
   if (B.mode === 'local') w.innerHTML = '<span class="tag">test mode</span>';
   else if (session) w.innerHTML = `<span class="whoname" title="${esc(session.email)}">${esc(short(session.email))}</span><button class="iconbtn" id="signout">Sign out</button>`;
@@ -456,6 +470,7 @@ function setSession(user) {
   Object.keys(draft).forEach(k => delete draft[k]);
   if (unsub) { unsub(); unsub = null; }
   if (user || B.mode === 'local') unsub = B.subscribe(scheduleRefresh);
+  if (user) maybePresence(); else stopPresence();
   renderWho();
   if (viewById[current] && viewById[current].group === 'Clan tools') rerender();
 }
@@ -661,6 +676,7 @@ function resultHtml(R) {
       <div class="reqhead"><div><h2>${esc(it.name)} ×${R.qty}</h2>
         <div class="meta">${chip(it.grade, 'g-' + it.grade)} <span class="chr">${esc(it.intro)}</span> ${esc(it.type)} · Skill lvl ${num(it.skill)} · Success ${pct(it.succ)} · MP ${num(it.mp)}</div></div>
         <div class="verdict ${R.ok ? 'ok' : 'bad'}">${R.ok ? 'Ready to craft' : bad + ' ingredient' + (bad > 1 ? 's' : '') + ' short'}</div></div>
+      <div class="prog"><span>${R.rows.length - bad} of ${R.rows.length} ready</span><div class="track"><div class="fill${R.ok ? ' done' : ''}" style="width:${R.rows.length ? Math.round((R.rows.length - bad) / R.rows.length * 100) : 100}%"></div></div><span>${R.rows.length ? Math.round((R.rows.length - bad) / R.rows.length * 100) : 100}%</span></div>
       <div class="tablewrap flat"><table class="req"><thead><tr><th>Ingredient</th><th class="num">Needed</th><th class="num">Warehouse</th><th class="num">To craft</th><th class="num" title="How many of the missing units you could make right now from materials in stock">Craftable</th><th class="num">Balance</th><th>Status</th></tr></thead><tbody>${rowsHtml}</tbody></table></div>
       ${scrollNote ? `<p class="hint">${esc(scrollNote)}</p>` : ''}
       <div class="commitbar"><button class="btn primary" id="commit"${R.ok ? '' : ' disabled'}>Commit</button>
@@ -734,6 +750,9 @@ function reqView(el) {
 }
 
 const VIEWS = [
+  { id: 'warehouse', label: 'Warehouse', group: 'Clan tools', render: gated(warehouseView) },
+  { id: 'reqcheck', label: 'Requirements Check', group: 'Clan tools', render: gated(reqView) },
+  { id: 'history', label: 'History', group: 'Clan tools', render: gated(historyView) },
   { id: 'start', label: 'Start Here', group: 'Reference', render: startView },
   { id: 'materials', label: 'Material Recipes', group: 'Reference', render: materialsView },
   { id: 'raw', label: 'Raw Material Breakdown', group: 'Reference', render: rawView },
@@ -742,9 +761,6 @@ const VIEWS = [
   { id: 'equipsrc', label: 'Equipment Sourcing', group: 'Reference', render: equipSourcingView },
   { id: 'notes', label: 'Notes', group: 'Reference', render: notesView },
   { id: 'audit', label: 'Audit Log', group: 'Reference', render: auditView },
-  { id: 'warehouse', label: 'Warehouse', group: 'Clan tools', render: gated(warehouseView) },
-  { id: 'reqcheck', label: 'Requirements Check', group: 'Clan tools', render: gated(reqView) },
-  { id: 'history', label: 'History', group: 'Clan tools', render: gated(historyView) },
 ];
 const viewById = Object.fromEntries(VIEWS.map(v => [v.id, v]));
 
@@ -824,11 +840,24 @@ function showDrawer(name) {
 }
 function hideDrawer() { $('#drawer').classList.remove('show'); $('#drawer').setAttribute('aria-hidden', 'true'); $('#scrim').classList.remove('show'); }
 function closeDrawer() { if (openName) go(current); }
+const ICON = {
+  start: 'M3 11l9-8 9 8M5 10v10h14V10',
+  materials: 'M9 3h6M10 3v6l-5 9a2 2 0 002 3h10a2 2 0 002-3l-5-9V3',
+  raw: 'M6 3h12l3 6-9 12L3 9l3-6zM3 9h18',
+  matsrc: 'M12 21s-7-6-7-11a7 7 0 0114 0c0 5-7 11-7 11zM12 12a2 2 0 100-4 2 2 0 000 4z',
+  equip: 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6l8-3z',
+  equipsrc: 'M12 21s-7-6-7-11a7 7 0 0114 0c0 5-7 11-7 11zM12 12a2 2 0 100-4 2 2 0 000 4z',
+  notes: 'M6 3h9l3 3v15H6zM9 10h6M9 14h6M9 18h4',
+  audit: 'M9 4h6l1 2h3v14H5V6h3l1-2zM9 13l2 2 4-4',
+  warehouse: 'M3 8l9-5 9 5v9l-9 5-9-5V8zM3 8l9 5 9-5M12 13v9',
+  reqcheck: 'M9 6h11M9 12h11M9 18h11M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2',
+  history: 'M12 7v5l3 2M21 12a9 9 0 11-3-6.7M21 4v5h-5',
+};
 function renderNav() {
   let h = '', g = '';
   VIEWS.forEach(v => {
     if (v.group !== g) { g = v.group; h += `<div class="navgroup">${esc(g)}</div>`; }
-    h += `<a href="#/${v.id}" class="${v.id === current ? 'on' : ''}${v.soon ? ' later' : ''}">${esc(v.label)}${v.soon ? '<span class="soon">soon</span>' : ''}</a>`;
+    h += `<a href="#/${v.id}" class="${v.id === current ? 'on' : ''}${v.soon ? ' later' : ''}"><span class="nl"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${ICON[v.id] || ICON.start}"/></svg>${esc(v.label)}</span>${v.soon ? '<span class="soon">soon</span>' : ''}</a>`;
   });
   $('#nav').innerHTML = `<div class="nav">${h}</div>`;
 }
@@ -884,13 +913,19 @@ gs.addEventListener('keydown', e => {
   if (e.key === 'Enter' && resList[resIdx]) { $('#gres').classList.remove('show'); gs.blur(); go(current || 'start', resList[resIdx].n); }
 });
 $('#burger').addEventListener('click', () => $('#side').classList.toggle('open'));
-function setTheme(t) { document.documentElement.dataset.theme = t; try { localStorage.setItem('l2theme', t); } catch (e) { /* ignore */ } }
+const THEMES = ['gold', 'steel', 'parchment'];
+function setTheme(t, keep) {
+  if (!THEMES.includes(t)) t = 'gold';
+  document.documentElement.dataset.theme = t;
+  document.querySelectorAll('#themes [data-theme]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.theme === t)));
+  if (!keep) try { localStorage.setItem('l2theme', t); } catch (e) { /* ignore */ }
+}
 let saved = null; try { saved = localStorage.getItem('l2theme'); } catch (e) { /* ignore */ }
-setTheme(saved || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'));
-$('#theme').addEventListener('click', () => setTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light'));
+setTheme(saved === 'light' ? 'parchment' : saved, true);   // 'dark' / nothing saved -> Dark Gold; the old light theme -> Parchment
+$('#themes').addEventListener('click', e => { const b = e.target.closest('[data-theme]'); if (b) setTheme(b.dataset.theme); });
 $('#foot').innerHTML = `Data from workbook <b>${esc(D.meta.version)}</b><br>${esc(D.meta.date)} · exported ${esc(D.meta.exported)}`;
 window.addEventListener('hashchange', route);
 document.addEventListener('visibilitychange', () => { if (!document.hidden && loaded && (session || B.mode === 'local')) scheduleRefresh(); });
 B.onAuth(setSession);
-B.init().then(u => { session = u; if (u) unsub = B.subscribe(scheduleRefresh); }, () => {}).then(() => { renderWho(); route(); });
+B.init().then(u => { session = u; if (u) { unsub = B.subscribe(scheduleRefresh); maybePresence(); } }, () => {}).then(() => { renderWho(); route(); });
 })();

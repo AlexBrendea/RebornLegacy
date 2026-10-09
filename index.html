@@ -4,12 +4,18 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>L2 Reborn Recipe Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Source+Sans+3:wght@400;600;700&display=swap">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div class="app">
   <nav class="side" id="side" aria-label="Sections">
-    <div class="brand">Reborn: Legacy<small>Equipment Recipe Tracker</small></div>
+    <div class="brand">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2l11 4v8c0 7-4.5 12-11 16C9.5 26 5 21 5 14V6l11-4z"/><path d="M16 9l4 5-4 7-4-7 4-5z"/></svg>
+      <div>Reborn: Legacy<small>Equipment Recipe Tracker</small></div>
+    </div>
     <div id="nav"></div>
     <div class="side-foot" id="foot"></div>
   </nav>
@@ -20,8 +26,13 @@
         <input id="gs" type="search" placeholder="Jump to any item, material or recipe… (press /)" autocomplete="off" aria-label="Search everything">
         <div class="results" id="gres" role="listbox"></div>
       </div>
+      <span class="online" id="online" hidden></span>
       <div class="who" id="who"></div>
-      <button class="iconbtn" id="theme" title="Switch light / dark theme">Theme</button>
+      <div class="themes" id="themes" role="group" aria-label="Colour theme">
+        <button type="button" data-theme="gold" title="Dark Gold" aria-label="Dark Gold theme"></button>
+        <button type="button" data-theme="steel" title="Steel &amp; Frost" aria-label="Steel and Frost theme"></button>
+        <button type="button" data-theme="parchment" title="Refined Parchment" aria-label="Refined Parchment theme"></button>
+      </div>
     </header>
     <main class="content" id="view"></main>
   </div>
