@@ -463,7 +463,7 @@ function renderWho() {
   const w = $('#who');
   if (B.mode === 'local') w.innerHTML = '<span class="tag">test mode</span>';
   else if (session) w.innerHTML = `<span class="whoname" title="${esc(session.email)}">${esc(short(session.email))}</span><button class="iconbtn" id="signout">Sign out</button>`;
-  else w.innerHTML = '<a class="iconbtn" href="#/warehouse">Sign in</a>';
+  else w.innerHTML = '<a class="iconbtn" href="#/home">Sign in</a>';
 }
 function setSession(user) {
   session = user; loaded = false; loadErr = null; loading = null; store = { stock: {}, learned: {}, meta: {} };
@@ -756,12 +756,7 @@ function homeView(el) {
     <a class="card tl" href="#/reqcheck"><h3>Requirements Check</h3><p>Pick an item and see what is missing, what to craft first, then Commit.</p></a>
     <a class="card tl" href="#/equip"><h3>Equipment Recipes</h3><p>Every recipe and what it is made from.</p></a>
     <a class="card tl" href="#/start"><h3>Start Here</h3><p>How the workbook and the colours work.</p></a></div>`;
-  if (B.mode === 'shared' && !session) {
-    el.innerHTML = head('Reborn: Legacy', 'Your shared recipe book and clan warehouse for Lineage II Reborn: Legacy.') +
-      `<div class="card"><h2>Welcome</h2><p>Sign in to see the clan warehouse, what you can craft right now and the latest changes. The reference pages on the left work without signing in.</p>
-      <div class="commitbar"><a class="btn primary" href="#/warehouse">Sign in</a><a class="btn" href="#/start">Start here</a></div></div>` + quick;
-    return;
-  }
+  if (B.mode === 'shared' && !session) { loginView(el); el.insertAdjacentHTML('beforeend', quick); return; }   // sign in right here, so you stay on Home afterwards
   gated(inner)(el);
   function inner(host) {
     const who = session ? short(session.email) : '';
